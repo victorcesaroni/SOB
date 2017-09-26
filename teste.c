@@ -16,14 +16,14 @@ module_param(encryption_key, charp, 0000);
 MODULE_PARM_DESC(encryption_key, "Encryption key");
 
 /* init */
-static int __init crypto_init(void) {	
-	printk(KERN_INFO "[CRYPTO] Init with key %s.\n", encryption_key);		
+static int __init crypto_init(void) {
+	printk(KERN_INFO "[CRYPTO] Init with key %s.\n", encryption_key);
 	return 0;
 }
 
 /* exit */
 static void __exit crypto_exit(void) {
-	printk(KERN_INFO "[CRYPTO] Exit.\n");	
+	printk(KERN_INFO "[CRYPTO] Exit.\n");
 }
 
 /* definicao das funcoes de init e exit */
