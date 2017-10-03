@@ -7,14 +7,14 @@
 #include <linux/stat.h>
 
 /* licenca do modulo */
-MODULE_LICENSE("SO B PUCC 2017");
+MODULE_LICENSE("MIT");
 MODULE_AUTHOR("GRUPO");
 
 /*protótipos funções*/
 static int device_write(struct file *filp, const char *buff, size_t len, loff_t * off);
 static int device_release(struct inode *inode, struct file *file);
 static int device_open(struct inode *inode, struct file *file);
-static int device_read(struct file *, char *, size_t, loff_t *);
+static int device_read(struct file *filp, char *buff, size_t len, loff_t * off);
 
 /* parametros do modulo */
 static char encryption_key[4096];
@@ -41,21 +41,36 @@ static void __exit crypto_exit(void) {
 	printk(KERN_INFO "[CRYPTO] Exit.\n");
 }
 
+/* write */
 static int device_write(struct file *filp, const char *buff, size_t len, loff_t * off)
 {
-	printk(KERN_ALERT "Arquivo escrito");
+	printk(KERN_ALERT "[CRYPTO] Write request %d bytes: %s.\n", len, buff);
+	
+	return 0;
+}
+
+/* read */
+static int device_read(struct file *filp, char *buff, size_t len, loff_t * off)
+{
+	printk(KERN_ALERT "[CRYPTO] Read request %d bytes.\n", len);
+	
+	return 0;
 }
 
 /*open*/
 static int device_open(struct inode *inode, struct file *file)
-{
-	 printk(KERN_ALERT "Arquivo aberto");
+{	
+	 printk(KERN_ALERT "[CRYPTO] Open request.\n");
+	 
+	 return 0;
 }
 
 /*release*/
 static int device_release(struct inode *inode, struct file *file)
 {
-	 printk(KERN_ALERT "Arquivo liberado");
+	 printk(KERN_ALERT "[CRYPTO] Release request.\n");
+	
+	 return 0;
 }
 
 
