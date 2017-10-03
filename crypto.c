@@ -14,7 +14,7 @@ MODULE_AUTHOR("GRUPO");
 static int device_write(struct file *filp, const char *buff, size_t len, loff_t * off);
 static int device_release(struct inode *inode, struct file *file);
 static int device_open(struct inode *inode, struct file *file);
-
+static int device_read(struct file *, char *, size_t, loff_t *);
 
 /* parametros do modulo */
 static char encryption_key[4096];
@@ -26,7 +26,8 @@ MODULE_PARM_DESC(encryption_key, "Encryption key");
 static struct file_operations fops = {
  .write = device_write,
  .open = device_open,
- .release = device_release
+ .release = device_release,
+ .read = device_read
 };
 
 /* init */
