@@ -20,7 +20,7 @@ static int device_open(struct inode *inode, struct file *file);
 static int device_read(struct file *filp, char *buff, size_t len, loff_t * off);
 
 /* parametros do modulo */
-static char encryption_key[4096];
+static char *encryption_key;
 
 module_param(encryption_key, charp, 0000);
 MODULE_PARM_DESC(encryption_key, "Encryption key");
@@ -57,13 +57,8 @@ static int __init crypto_init(void) {
 static void __exit crypto_exit(void) {
 	
 	//liberacao do device
-	int ret  = unregister_chrdev(Major, DEVICE_NAME); //ERRO AQUI 
-	
-	if(ret < 0)
-	{
-		printk(KERN_ALERT "Error in unregister_chrdev: %d\n",ret);
-	}
-	
+	 __unregister_chrdev(Major,0,256, DEVICE_NAME);  
+			
 	printk(KERN_INFO "[CRYPTO] Exit.\n");
 }
 
@@ -93,7 +88,11 @@ static int device_open(struct inode *inode, struct file *file)
 	}
 		
 	deviceInUse++;	//define dispositivo como "em uso"
-	try_module_get(THIS_MODULE);
+	
+	if(try_module_get(THIS_MODULE) == false)
+	{
+		return -EBUSY; //dispositivo em uso
+	}
 
 	 return 0;
 }
