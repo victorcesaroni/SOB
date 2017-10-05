@@ -11,35 +11,45 @@ int main(int argc, char *argv[]) {
 	char op = argv[1][0];
 	char *data = argv[2];
 	
-	FILE *device = fopen("devcrypto", "w");
+	FILE *device = fopen("/dev/cryptoSOB", "w");
 	
 	if (NULL == device) {
 		printf("Failed to open crypto.\n");
 		return -2;
 	}
 	
+	printf("Pressione qualquer tecla para escrever\n");
+	getchar();
+	
 	// executa a escrita no device
 	fprintf(device, "%c %s", op, data);
 	fclose(device);
 	
-	device = fopen("devcrypto", "r");
-	
-	if (NULL == device) {
-		printf("Failed to open crypto [2].\n");
-		return -3;
-	}
-	
-	char buff[4096];
+	printf("Pressione qualquer tecla para continuar\n");
+	getchar();
 	
 	// espera enquanto o device estiver ocupado
-	while (0 != fread(buff, 4096, 1, device)) {
-		printf("Device not ready yet.\n");
-		usleep(250000);
-	}
+	//do {
+		device = fopen("/dev/cryptoSOB", "r");
 	
-	printf("Result: %s\n", buff);
+		if (NULL == device) {
+			printf("Device not ready yet.\n");
+			usleep(250000);
+			return -3;
+		}
+	//} while(NULL == device);
 	
+	// le a resposta
+	char buff[4096];
+	
+	printf("Pressione qualquer tecla para ler\n");
+	getchar();
+	
+	fread(buff, 4096, 1, device);
 	fclose(device);
+	
+	// exibe a resposta
+	printf("Result: %s\n", buff);
 	
 	return 0;
 }

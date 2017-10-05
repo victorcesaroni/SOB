@@ -6,12 +6,14 @@
 #include <linux/proc_fs.h>
 #include <linux/stat.h>
 
+#define SUCCESS 0
 #define DEVICE_NAME "cryptoSOB"
 
 /* licenca do modulo */
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("GRUPO");
 
+#define BUFFER_SIZE (1024 * 10) // esse dispositivo irá suportar um armazenamento de 10KB
 
 /*protótipos funções*/
 static int device_write(struct file *filp, const char *buff, size_t len, loff_t * off);
@@ -37,6 +39,8 @@ static struct file_operations fops = {
 static int Major;
 static int deviceInUse = 0;
 
+static char content[BUFFER_SIZE]; // espaço para armazenamento de resultados
+
 /* init */
 static int __init crypto_init(void) {
 	
@@ -50,7 +54,9 @@ static int __init crypto_init(void) {
 	}
 
 	printk(KERN_INFO "[CRYPTO] Init with key %s.\n", encryption_key);
-	return 0;
+	printk(KERN_INFO "'mknod /dev/%s c %d 0'.\n", DEVICE_NAME, Major);
+	
+	return SUCCESS;
 }
 
 /* exit */
@@ -65,9 +71,37 @@ static void __exit crypto_exit(void) {
 /* write */
 static int device_write(struct file *filp, const char *buff, size_t len, loff_t * off)
 {
-	printk(KERN_ALERT "[CRYPTO] Write request %d bytes: %s.\n", len, buff);
+	char op;
+	char data[BUFFER_SIZE];
 	
-	return 0;
+	printk(KERN_ALERT "[CRYPTO] Write request %d bytes. raw_data: %s.\n", len, buff);
+		
+	sscanf(buff, "%c %s", &op, data);
+	
+	switch (op) {
+		case 'c':
+			strcpy(content, "ENCRIPT ");
+			strcat(content, data);
+			break;
+			
+		case 'd':
+			strcpy(content, "DECRIPT ");
+			strcat(content, data);
+			break;
+		
+		case 'h':
+			strcpy(content, "HASH ");
+			strcat(content, data);
+			break;
+			
+		default:
+			strcpy(content, "ERROR ");
+			strcat(content, data);
+			break;
+	}
+	
+	// bytes escritos
+	return len;
 }
 
 /* read */
@@ -75,12 +109,20 @@ static int device_read(struct file *filp, char *buff, size_t len, loff_t * off)
 {
 	printk(KERN_ALERT "[CRYPTO] Read request %d bytes.\n", len);
 	
-	return 0;
+	if (len > BUFFER_SIZE) {
+		printk(KERN_ALERT "[CRYPTO] Warning: Bad read request (%d bytes).\n", len);	
+		len = BUFFER_SIZE;
+	}
+	
+	int bytes_read = len - copy_to_user(buff, content, len);
+	
+	return bytes_read;
 }
 
 /*open*/
 static int device_open(struct inode *inode, struct file *file)
 {	
+	printk(KERN_ALERT "[CRYPTO] Open request.\n");
 	 
 	if(deviceInUse)
 	{
@@ -94,17 +136,19 @@ static int device_open(struct inode *inode, struct file *file)
 		return -EBUSY; //dispositivo em uso
 	}
 
-	 return 0;
+	return SUCCESS;
 }
 
 /*release*/
 static int device_release(struct inode *inode, struct file *file)
 {
+	printk(KERN_ALERT "[CRYPTO] Close request.\n");
+
 	deviceInUse--;//define dispositivo como "liberado"
 
 	module_put(THIS_MODULE);	 
 
-	 return 0;
+	return SUCCESS;
 }
 
 
