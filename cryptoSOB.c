@@ -143,7 +143,6 @@ void get_sha1_hash(char *data, int length, char output[41]) {
     struct hash_desc desc;
     
     char hash[SHA1_LENGTH];
-    
     memset(hash, 0x00, sizeof(hash));
     
     int i;
@@ -239,7 +238,7 @@ static int device_write(struct file *filp, const char *buff, size_t len, loff_t 
 	char data[BUFFER_SIZE];
 	unsigned char bytes[BUFFER_SIZE];
 	char result[BUFFER_SIZE];
-	
+		
 	sscanf(buff, "%c %s", &op, data);	
 	
 	int bytes_len = 0;
