@@ -1,6 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
 
 int main(int argc, char *argv[]) {
 	if (argc != 3) {
@@ -10,43 +15,23 @@ int main(int argc, char *argv[]) {
 
 	char op = argv[1][0];
 	char *data = argv[2];
+	char buff[256];
+	char buff2[256];
+	memset(buff, 0x00, sizeof(buff));
 	
-	FILE *device = fopen("/dev/cryptoSOB", "w");
+	int d = open("/dev/cryptoSOB", O_RDWR);
+		
+	// executa a escrita
+	sprintf(buff2, "%c %s", op, data);
 	
-	if (NULL == device) {
-		printf("Failed to open crypto.\n");
-		return -2;
-	}
+	write(d, buff2, strlen(buff2));
+	close(d);
 	
-	printf("Pressione qualquer tecla para escrever\n");
-	getchar();
+	d = open("/dev/cryptoSOB", O_RDWR);
 	
-	// executa a escrita no device
-	fprintf(device, "%c %s", op, data);
-	fclose(device);
-	
-	printf("Pressione qualquer tecla para continuar\n");
-	getchar();
-	
-	// espera enquanto o device estiver ocupado
-	//do {
-		device = fopen("/dev/cryptoSOB", "r");
-	
-		if (NULL == device) {
-			printf("Device not ready yet.\n");
-			usleep(250000);
-			return -3;
-		}
-	//} while(NULL == device);
-	
-	// le a resposta
-	char buff[4096];
-	
-	printf("Pressione qualquer tecla para ler\n");
-	getchar();
-	
-	fread(buff, 4096, 1, device);
-	fclose(device);
+	// executa a leitura
+	read(d, buff, 256);
+	close(d);
 	
 	// exibe a resposta
 	printf("Result: %s\n", buff);
