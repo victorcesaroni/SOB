@@ -1,0 +1,1 @@
+cmd_/home/victor/victorcesaroni/proj2/xminix/xminix.ko := ld -r -m elf_x86_64 -T ./scripts/module-common.lds --build-id  -o /home/victor/victorcesaroni/proj2/xminix/xminix.ko /home/victor/victorcesaroni/proj2/xminix/xminix.o /home/victor/victorcesaroni/proj2/xminix/xminix.mod.o
