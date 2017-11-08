@@ -142,6 +142,25 @@ changed:
 	return -EAGAIN;
 }
 
+
+static void dump_buffer(unsigned char *buf, unsigned size)
+{
+	printk("size: %d %x\n", size, buf); 
+	unsigned i; 
+	for (i = 0; i < size; i++)
+	{
+		char c = (char)buf[i];		
+		
+		if (c != '\0' && c != '\n' && (c == 9 || c == 10 || (c >= 32 && c <= 127))) {
+			printk("%c", (char)c);
+		}
+		//else
+		//	printk("\\x%02x", (unsigned char)c);		
+	}
+	
+	printk("\n");
+}
+
 static inline int get_block(struct inode * inode, sector_t block,
 			struct buffer_head *bh, int create)
 {

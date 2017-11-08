@@ -488,13 +488,25 @@ static int minix_write_begin(struct file *file, struct address_space *mapping,
 	printk("minix_write_begin\n");
 		
 	int ret;
+	
+	/*
+	aqui conseguimos pegar o tamanho da frase escrita
+	char test[PAGE_SIZE];	
+	
+	struct page *page = *pagep;
+	
+	printk("%X %X %X %d %d %d\n", pagep, pagep ? *pagep : 0, *pagep ? **(int**)pagep : 0, pos, len, PAGE_SIZE);
+		
+	copy_from_user(test, page, len);
+	
+	dump_buffer(pagep, len);
+	//dump_buffer(test, len);*/
 
 	ret = block_write_begin(mapping, pos, len, flags, pagep,
 				minix_get_block);
 	if (unlikely(ret))
 		minix_write_failed(mapping, pos + len);
 	
-	//dump_buffer(*pagep, len);
 	
 	return ret;
 }
@@ -648,6 +660,7 @@ static struct buffer_head * V1_minix_update_inode(struct inode * inode)
 	raw_inode = minix_V1_raw_inode(inode->i_sb, inode->i_ino, &bh);
 	if (!raw_inode)
 		return NULL;
+		
 	raw_inode->i_mode = inode->i_mode;
 	raw_inode->i_uid = fs_high2lowuid(i_uid_read(inode));
 	raw_inode->i_gid = fs_high2lowgid(i_gid_read(inode));
@@ -659,6 +672,7 @@ static struct buffer_head * V1_minix_update_inode(struct inode * inode)
 	else for (i = 0; i < 9; i++)
 		raw_inode->i_zone[i] = minix_inode->u.i1_data[i];
 	mark_buffer_dirty(bh);
+	
 	return bh;
 }
 
@@ -707,6 +721,8 @@ static int minix_write_inode(struct inode *inode, struct writeback_control *wbc)
 	if (!bh)
 		return -EIO;
 	
+	//dump_buffer(bh->b_data, bh->b_size);
+	
 	if (wbc->sync_mode == WB_SYNC_ALL && buffer_dirty(bh)) {
 		sync_dirty_buffer(bh);
 		if (buffer_req(bh) && !buffer_uptodate(bh)) {
@@ -715,7 +731,7 @@ static int minix_write_inode(struct inode *inode, struct writeback_control *wbc)
 			err = -EIO;
 		}
 	}
-		
+	
 	brelse (bh);	
 	
 	return err;
