@@ -455,11 +455,202 @@ static int minix_writepage(struct page *page, struct writeback_control *wbc)
 	return block_write_full_page(page, minix_get_block, wbc);
 }
 
+// funcao obtida do kernel
+static void buffer_io_error(struct buffer_head *bh, char *msg)
+{
+	char b[BDEVNAME_SIZE];
+
+	if (!test_bit(BH_Quiet, &bh->b_state))
+		//printk_ratelimited(KERN_ERR // removido para simplificar reconstrucao
+		printk(KERN_ERR
+			"Buffer I/O error on dev %s, logical block %llu%s\n",
+			bdevname(bh->b_bdev, b),
+			(unsigned long long)bh->b_blocknr, msg);
+}
+
+// funcao obtida do kernel
+// nao esquecer de limpar o buffer para testar free && sync && echo 3 > /proc/sys/vm/drop_caches && free
+static void end_buffer_async_read(struct buffer_head *bh, int uptodate)
+{
+	unsigned long flags;
+	struct buffer_head *first;
+	struct buffer_head *tmp;
+	struct page *page;
+	int page_uptodate = 1;
+
+	BUG_ON(!buffer_async_read(bh));
+
+	page = bh->b_page;
+	if (uptodate) {
+		set_buffer_uptodate(bh);
+	} else {
+		clear_buffer_uptodate(bh);
+		buffer_io_error(bh, ", async page read");
+		SetPageError(page);
+	}
+
+	/*
+	 * Be _very_ careful from here on. Bad things can happen if
+	 * two buffer heads end IO at almost the same time and both
+	 * decide that the page is now completely done.
+	 */
+	first = page_buffers(page);
+	local_irq_save(flags);
+	bit_spin_lock(BH_Uptodate_Lock, &first->b_state);
+	clear_buffer_async_read(bh);
+	
+	printk("end_buffer_async_read");
+	dump_buffer(bh->b_data, bh->b_size);
+	// insira descriptografia aqui
+	
+	unlock_buffer(bh);
+	
+	tmp = bh;
+	do {
+		if (!buffer_uptodate(tmp))
+			page_uptodate = 0;
+		if (buffer_async_read(tmp)) {
+			BUG_ON(!buffer_locked(tmp));
+			goto still_busy;
+		}
+				
+		tmp = tmp->b_this_page;
+	} while (tmp != bh);
+	bit_spin_unlock(BH_Uptodate_Lock, &first->b_state);
+	local_irq_restore(flags);
+
+	/*
+	 * If none of the buffers had errors and they are all
+	 * uptodate then we can set the page uptodate.
+	 */
+	if (page_uptodate && !PageError(page))
+		SetPageUptodate(page);
+	unlock_page(page);
+	return;
+
+still_busy:
+	bit_spin_unlock(BH_Uptodate_Lock, &first->b_state);
+	local_irq_restore(flags);
+	return;
+}
+
+// funcao obtida do kernel
+static void mark_buffer_async_read(struct buffer_head *bh)
+{
+	bh->b_end_io = end_buffer_async_read;
+	set_buffer_async_read(bh);
+}
+
+// funcao obtida do kernel
+static inline int block_size_bits(unsigned int blocksize)
+{
+	return ilog2(blocksize);
+}
+
+// funcao obtida do kernel
+static struct buffer_head *create_page_buffers(struct page *page, struct inode *inode, unsigned int b_state)
+{
+	BUG_ON(!PageLocked(page));
+
+	if (!page_has_buffers(page))
+		create_empty_buffers(page, 1 << ACCESS_ONCE(inode->i_blkbits), b_state);
+	return page_buffers(page);
+}
+
+
+// funcao obtida do kernel
+int xminix_block_read_full_page(struct page *page, get_block_t *get_block)
+{
+	struct inode *inode = page->mapping->host;
+	sector_t iblock, lblock;
+	struct buffer_head *bh, *head, *arr[MAX_BUF_PER_PAGE];
+	unsigned int blocksize, bbits;
+	int nr, i;
+	int fully_mapped = 1;
+
+	head = create_page_buffers(page, inode, 0);
+	blocksize = head->b_size;
+	bbits = block_size_bits(blocksize);
+
+	iblock = (sector_t)page->index << (PAGE_CACHE_SHIFT - bbits);
+	lblock = (i_size_read(inode)+blocksize-1) >> bbits;
+	bh = head;
+	nr = 0;
+	i = 0;
+
+	do {		
+		if (buffer_uptodate(bh))
+			continue;
+
+		if (!buffer_mapped(bh)) {
+			int err = 0;
+
+			fully_mapped = 0;
+			if (iblock < lblock) {
+				WARN_ON(bh->b_size != blocksize);
+				err = get_block(inode, iblock, bh, 0);
+				if (err)
+					SetPageError(page);
+			}
+			if (!buffer_mapped(bh)) {
+				zero_user(page, i * blocksize, blocksize);
+				if (!err)
+					set_buffer_uptodate(bh);
+				continue;
+			}			
+			
+			/*
+			 * get_block() might have updated the buffer
+			 * synchronously
+			 */
+			if (buffer_uptodate(bh))
+				continue;
+		}
+		arr[nr++] = bh;
+	} while (i++, iblock++, (bh = bh->b_this_page) != head);
+
+	if (fully_mapped)
+		SetPageMappedToDisk(page);
+
+	if (!nr) {
+		/*
+		 * All buffers are uptodate - we can set the page uptodate
+		 * as well. But not if get_block() returned an error.
+		 */
+		if (!PageError(page))
+			SetPageUptodate(page);
+		unlock_page(page);
+		return 0;
+	}
+
+	/* Stage two: lock the buffers */
+	for (i = 0; i < nr; i++) {
+		bh = arr[i];
+		lock_buffer(bh);
+		mark_buffer_async_read(bh);
+	}
+
+	/*
+	 * Stage 3: start the IO.  Check for uptodateness
+	 * inside the buffer lock in case another process reading
+	 * the underlying blockdev brought it uptodate (the sct fix).
+	 */
+	for (i = 0; i < nr; i++) {
+		bh = arr[i];
+						
+		if (buffer_uptodate(bh))
+			end_buffer_async_read(bh, 1);
+		else
+			submit_bh(READ, bh);		
+	}
+	return 0;
+}
+
 static int minix_readpage(struct file *file, struct page *page)
 {
 	printk("minix_readpage\n");
 		
-	return block_read_full_page(page,minix_get_block);
+	return xminix_block_read_full_page(page,minix_get_block);
 }
 
 int minix_prepare_chunk(struct page *page, loff_t pos, unsigned len)
@@ -480,24 +671,6 @@ static void minix_write_failed(struct address_space *mapping, loff_t to)
 		minix_truncate(inode);
 	}
 }
-
-
-// funcao obtida do kernel
-static inline int block_size_bits(unsigned int blocksize)
-{
-	return ilog2(blocksize);
-}
-
-// funcao obtida do kernel
-static struct buffer_head *create_page_buffers(struct page *page, struct inode *inode, unsigned int b_state)
-{
-	BUG_ON(!PageLocked(page));
-
-	if (!page_has_buffers(page))
-		create_empty_buffers(page, 1 << ACCESS_ONCE(inode->i_blkbits), b_state);
-	return page_buffers(page);
-}
-
 
 // funcao obtida do kernel
 int xminix__block_write_begin(struct page *page, loff_t pos, unsigned len,
@@ -675,7 +848,7 @@ static int xminix__block_commit_write(struct inode *inode, struct page *page,
 			printk("xminix__block_commit_write");
 			int ii = 0;
 			for (ii = 0; ii < bh->b_size; ii++) {
-				bh->b_data[ii] = 'B';
+				//bh->b_data[ii] = 'B';
 			}
 			//insira criptografia aqui -------------
 			dump_buffer(bh->b_data, bh->b_size);
