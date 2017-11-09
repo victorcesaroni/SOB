@@ -9,6 +9,25 @@
 #include <linux/uio.h>
 #include "minix.h"
 
+static void dump_buffer(unsigned char *buf, unsigned size)
+{
+	printk("size: %d %x\n", size, buf); 
+	unsigned i; 
+	for (i = 0; i < size; i++)
+	{
+		char c = (char)buf[i];		
+		
+		if (c != '\0' && c != '\n' && (c == 9 || c == 10 || (c >= 32 && c <= 127))) {
+			printk("%c", (char)c);
+		}
+		//else
+		//	printk("\\x%02x", (unsigned char)c);		
+	}
+	
+	printk("\n");
+}
+
+
 /*
 struct iov_iter {
 	int type;
@@ -42,11 +61,13 @@ struct bio_vec {
 */
 
 ssize_t xminix_file_write_iter(struct kiocb *iocb, struct iov_iter *from) {
-
-	ssize_t ret = generic_file_write_iter(iocb, from);
-	
+		
 	printk("xminix_file_write_iter\n");
-	printk("%d\n", from->count);
+	printk("%d %d\n", from->nr_segs, from->count);
+	
+	//dump_buffer(from->kvec->iov_base, from->kvec->iov_len);
+	
+	ssize_t ret = generic_file_write_iter(iocb, from);	
 	
 	return ret;
 }
