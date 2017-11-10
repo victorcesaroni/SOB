@@ -96,7 +96,11 @@ static void end_buffer_async_read(struct buffer_head *bh, int uptodate)
 		buffer_io_error(bh, ", async page read");
 		SetPageError(page);
 	}
-
+	
+	///////////////////////////////////////////////////////////////////////////
+	// insira descriptografia aqui
+	///////////////////////////////////////////////////////////////////////////
+		
 	/*
 	 * Be _very_ careful from here on. Bad things can happen if
 	 * two buffer heads end IO at almost the same time and both
@@ -104,15 +108,22 @@ static void end_buffer_async_read(struct buffer_head *bh, int uptodate)
 	 */
 	first = page_buffers(page);
 	local_irq_save(flags);
-	bit_spin_lock(BH_Uptodate_Lock, &first->b_state);
+	bit_spin_lock(BH_Uptodate_Lock, &first->b_state);	
+	
 	clear_buffer_async_read(bh);
 	
-	printk("end_buffer_async_read");
-	dump_buffer(bh->b_data, bh->b_size);
-	///////////////////////////////////////////////////////////////////////////
-	// insira descriptografia aqui
-	///////////////////////////////////////////////////////////////////////////
+	size_t blocksize = bh->b_size;
+	__u8 *result = kmalloc(blocksize, GFP_KERNEL);	
+	memset(result, 0, blocksize);
+		
+	if (aes_operation(AES_DECRYPT, bh->b_data, bh->b_size, result) == 0) {
+		memcpy(bh->b_data, result, blocksize);
+	}
+		
+	kfree(result);
 	
+	dump_buffer(bh->b_data, bh->b_size);	
+		
 	unlock_buffer(bh);
 	
 	tmp = bh;
@@ -145,7 +156,7 @@ still_busy:
 }
 
 static void mark_buffer_async_read(struct buffer_head *bh)
-{
+{	
 	bh->b_end_io = end_buffer_async_read;
 	set_buffer_async_read(bh);
 }
@@ -236,6 +247,7 @@ int xminix_block_read_full_page(struct page *page, get_block_t *get_block)
 	}
 	return 0;
 }
+
 
 
 /*
@@ -360,6 +372,8 @@ int xminix_block_write_begin(struct address_space *mapping, loff_t pos, unsigned
 static int xminix__block_commit_write(struct inode *inode, struct page *page,
 		unsigned from, unsigned to)
 {
+	printk("xminix__block_commit_write");
+	
 	unsigned block_start, block_end;
 	int partial = 0;
 	unsigned blocksize;
@@ -374,16 +388,22 @@ static int xminix__block_commit_write(struct inode *inode, struct page *page,
 		if (block_end <= from || block_start >= to) {
 			if (!buffer_uptodate(bh))
 				partial = 1;
-		} else {
-			printk("xminix__block_commit_write");
-			int ii = 0;
-			for (ii = 0; ii < bh->b_size; ii++) {
-				//bh->b_data[ii] = 'B';
-			}
+		} else {						
+			dump_buffer(bh->b_data, blocksize);
+			
 			////////////////////////////////////////////////////////
 			//insira criptografia aqui -------------
-			////////////////////////////////////////////////////////
-			dump_buffer(bh->b_data, bh->b_size);
+			////////////////////////////////////////////////////////			
+			
+			__u8 *result = kmalloc(blocksize, GFP_KERNEL);	
+			memset(result, 0, blocksize);
+
+			if (aes_operation(AES_ENCRYPT, bh->b_data, bh->b_size, result) == 0) {
+				memcpy(bh->b_data, result, blocksize);
+			}
+			
+			kfree(result);
+			
 			set_buffer_uptodate(bh);
 			mark_buffer_dirty(bh);
 		}
@@ -450,9 +470,8 @@ int xminix_write_end(struct file *file, struct address_space *mapping,
 	loff_t old_size = inode->i_size;
 	int i_size_changed = 0;
 
-	
 	copied = xminix_block_write_end(file, mapping, pos, len, copied, page, fsdata);
-
+	
 	/*
 	 * No need to use i_size_read() here, the i_size
 	 * cannot change under us because we hold i_mutex.

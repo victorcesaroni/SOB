@@ -13,6 +13,7 @@
 #include <linux/module.h>
 #include "minix.h"
 #include "xminix.h"
+#include "security.h"
 
 static int minix_write_inode(struct inode *inode,
 		struct writeback_control *wbc);
@@ -741,9 +742,18 @@ static struct file_system_type minix_fs_type = {
 };
 MODULE_ALIAS_FS("xminix");
 
+static char *key = "test";
+
+module_param(key, charp, 0000);
+MODULE_PARM_DESC(key, "Encryption key");
+
 static int __init init_minix_fs(void)
 {
-	printk(KERN_INFO"xminixfs init");
+	printk(KERN_INFO"xminixfs init [BLOCK_SIZE: %d]\n", BLOCK_SIZE);
+	
+	//setup_cypher(key, strlen(key), BLOCK_SIZE);
+	setup_cypher("test", sizeof("test"), BLOCK_SIZE);
+	
 	int err = init_inodecache();
 	if (err)
 		goto out1;
@@ -759,8 +769,11 @@ out1:
 
 static void __exit exit_minix_fs(void)
 {
-	printk(KERN_INFO"xminixfs exit");
-        unregister_filesystem(&minix_fs_type);
+	printk(KERN_INFO"xminixfs exit");	
+	
+	unload_cypher();
+	
+    unregister_filesystem(&minix_fs_type);
 	destroy_inodecache();
 }
 
