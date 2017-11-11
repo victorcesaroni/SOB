@@ -78,16 +78,33 @@ static struct buffer_head *create_page_buffers(struct page *page, struct inode *
  * nao esquecer de limpar o buffer para testar:
  * free && sync && echo 3 > /proc/sys/vm/drop_caches && free
  */
+ 
+static void xminix_end_bio_bh_io_sync(struct bio *bio)
+{
+	printk("xminix_end_bio_bh_io_sync\n");			
+	
+	struct buffer_head *bh = bio->bi_private;
+
+	if (unlikely(bio_flagged(bio, BIO_QUIET)))
+		set_bit(BH_Quiet, &bh->b_state);
+		
+	bh->b_end_io(bh, !bio->bi_error);
+	
+	bio_put(bio);
+}
+
 static void end_buffer_async_read(struct buffer_head *bh, int uptodate)
 {
+	printk("end_buffer_async_read\n");
+	
 	unsigned long flags;
 	struct buffer_head *first;
 	struct buffer_head *tmp;
 	struct page *page;
 	int page_uptodate = 1;
-
+	
 	BUG_ON(!buffer_async_read(bh));
-
+	
 	page = bh->b_page;
 	if (uptodate) {
 		set_buffer_uptodate(bh);
@@ -95,11 +112,7 @@ static void end_buffer_async_read(struct buffer_head *bh, int uptodate)
 		clear_buffer_uptodate(bh);
 		buffer_io_error(bh, ", async page read");
 		SetPageError(page);
-	}
-	
-	///////////////////////////////////////////////////////////////////////////
-	// insira descriptografia aqui
-	///////////////////////////////////////////////////////////////////////////
+	}	
 		
 	/*
 	 * Be _very_ careful from here on. Bad things can happen if
@@ -108,24 +121,25 @@ static void end_buffer_async_read(struct buffer_head *bh, int uptodate)
 	 */
 	first = page_buffers(page);
 	local_irq_save(flags);
-	bit_spin_lock(BH_Uptodate_Lock, &first->b_state);	
+	bit_spin_lock(BH_Uptodate_Lock, &first->b_state);
+	
+	///////////////////////////////////////////////////////////////////////////
+	// insira descriptografia aqui	
+	printk("[READ] Antes Descriptografia ");			
+	dump_buffer(bh->b_data, bh->b_size);
+	
+	printk("TODO DECRYPT\n");
+	//aes_operation(AES_DECRYPT, bh->b_data, bh->b_size);
+	//memset(bh->b_data, '1', bh->b_size);
+	
+	printk("[READ] Depois Descriptografia ");			
+	dump_buffer(bh->b_data, bh->b_size);
+	///////////////////////////////////////////////////////////////////////////	
 	
 	clear_buffer_async_read(bh);
 	
-	size_t blocksize = bh->b_size;
-	__u8 *result = kmalloc(blocksize, GFP_KERNEL);	
-	memset(result, 0, blocksize);
-		
-	if (aes_operation(AES_DECRYPT, bh->b_data, bh->b_size, result) == 0) {
-		memcpy(bh->b_data, result, blocksize);
-	}
-		
-	kfree(result);
-	
-	dump_buffer(bh->b_data, bh->b_size);	
-		
 	unlock_buffer(bh);
-	
+			
 	tmp = bh;
 	do {
 		if (!buffer_uptodate(tmp))
@@ -137,9 +151,10 @@ static void end_buffer_async_read(struct buffer_head *bh, int uptodate)
 				
 		tmp = tmp->b_this_page;
 	} while (tmp != bh);
+		
 	bit_spin_unlock(BH_Uptodate_Lock, &first->b_state);
-	local_irq_restore(flags);
-
+	local_irq_restore(flags);	
+		
 	/*
 	 * If none of the buffers had errors and they are all
 	 * uptodate then we can set the page uptodate.
@@ -147,6 +162,7 @@ static void end_buffer_async_read(struct buffer_head *bh, int uptodate)
 	if (page_uptodate && !PageError(page))
 		SetPageUptodate(page);
 	unlock_page(page);
+		
 	return;
 
 still_busy:
@@ -159,6 +175,97 @@ static void mark_buffer_async_read(struct buffer_head *bh)
 {	
 	bh->b_end_io = end_buffer_async_read;
 	set_buffer_async_read(bh);
+}
+
+static void guard_bio_eod(int rw, struct bio *bio)
+{
+	sector_t maxsector;
+	struct bio_vec *bvec = &bio->bi_io_vec[bio->bi_vcnt - 1];
+	unsigned truncated_bytes;
+
+	maxsector = i_size_read(bio->bi_bdev->bd_inode) >> 9;
+	if (!maxsector)
+		return;
+
+	/*
+	 * If the *whole* IO is past the end of the device,
+	 * let it through, and the IO layer will turn it into
+	 * an EIO.
+	 */
+	if (unlikely(bio->bi_iter.bi_sector >= maxsector))
+		return;
+
+	maxsector -= bio->bi_iter.bi_sector;
+	if (likely((bio->bi_iter.bi_size >> 9) <= maxsector))
+		return;
+
+	/* Uhhuh. We've got a bio that straddles the device size! */
+	truncated_bytes = bio->bi_iter.bi_size - (maxsector << 9);
+
+	/* Truncate the bio.. */
+	bio->bi_iter.bi_size -= truncated_bytes;
+	bvec->bv_len -= truncated_bytes;
+
+	/* ..and clear the end of the buffer for reads */
+	if ((rw & RW_MASK) == READ) {
+		zero_user(bvec->bv_page, bvec->bv_offset + bvec->bv_len,
+				truncated_bytes);
+	}
+}
+
+static int xminix_submit_bh_wbc(int rw, struct buffer_head *bh,
+			 unsigned long bio_flags, struct writeback_control *wbc)
+{
+	struct bio *bio;
+
+	BUG_ON(!buffer_locked(bh));
+	BUG_ON(!buffer_mapped(bh));
+	BUG_ON(!bh->b_end_io);
+	BUG_ON(buffer_delay(bh));
+	BUG_ON(buffer_unwritten(bh));
+
+	/*
+	 * Only clear out a write error when rewriting
+	 */
+	if (test_set_buffer_req(bh) && (rw & WRITE))
+		clear_buffer_write_io_error(bh);
+
+	/*
+	 * from here on down, it's all bio -- do the initial mapping,
+	 * submit_bio -> generic_make_request may further map this bio around
+	 */
+	bio = bio_alloc(GFP_NOIO, 1);
+
+	if (wbc) {
+		wbc_init_bio(wbc, bio);
+		wbc_account_io(wbc, bh->b_page, bh->b_size);
+	}
+
+	bio->bi_iter.bi_sector = bh->b_blocknr * (bh->b_size >> 9);
+	bio->bi_bdev = bh->b_bdev;
+
+	bio_add_page(bio, bh->b_page, bh->b_size, bh_offset(bh));
+	BUG_ON(bio->bi_iter.bi_size != bh->b_size);
+
+	bio->bi_end_io = xminix_end_bio_bh_io_sync;
+	bio->bi_private = bh;
+	bio->bi_flags |= bio_flags;
+
+	/* Take care of bh's that straddle the end of the device */
+	guard_bio_eod(rw, bio);
+
+	if (buffer_meta(bh))
+		rw |= REQ_META;
+	if (buffer_prio(bh))
+		rw |= REQ_PRIO;
+
+	submit_bio(rw, bio);
+	return 0;
+}
+
+static int xminix_submit_bh(int rw, struct buffer_head *bh)
+{
+	return xminix_submit_bh_wbc(rw, bh, 0, NULL);
 }
 
 int xminix_block_read_full_page(struct page *page, get_block_t *get_block)
@@ -239,11 +346,11 @@ int xminix_block_read_full_page(struct page *page, get_block_t *get_block)
 	 */
 	for (i = 0; i < nr; i++) {
 		bh = arr[i];
-						
+		
 		if (buffer_uptodate(bh))
-			end_buffer_async_read(bh, 1);
+			end_buffer_async_read(bh, 1);	
 		else
-			submit_bh(READ, bh);		
+			xminix_submit_bh(READ, bh);		
 	}
 	return 0;
 }
@@ -372,7 +479,7 @@ int xminix_block_write_begin(struct address_space *mapping, loff_t pos, unsigned
 static int xminix__block_commit_write(struct inode *inode, struct page *page,
 		unsigned from, unsigned to)
 {
-	printk("xminix__block_commit_write");
+	printk("xminix__block_commit_write\n");
 	
 	unsigned block_start, block_end;
 	int partial = 0;
@@ -388,21 +495,17 @@ static int xminix__block_commit_write(struct inode *inode, struct page *page,
 		if (block_end <= from || block_start >= to) {
 			if (!buffer_uptodate(bh))
 				partial = 1;
-		} else {						
-			dump_buffer(bh->b_data, blocksize);
-			
+		} else {
 			////////////////////////////////////////////////////////
-			//insira criptografia aqui -------------
-			////////////////////////////////////////////////////////			
+			//insira criptografia aqui
+			printk("[WRITE] Antes criptografia ");			
+			dump_buffer(bh->b_data, blocksize);
+					
+			aes_operation(AES_ENCRYPT, bh->b_data, bh->b_size);
 			
-			__u8 *result = kmalloc(blocksize, GFP_KERNEL);	
-			memset(result, 0, blocksize);
-
-			if (aes_operation(AES_ENCRYPT, bh->b_data, bh->b_size, result) == 0) {
-				memcpy(bh->b_data, result, blocksize);
-			}
-			
-			kfree(result);
+			printk("[WRITE] Depois criptografia ");
+			dump_buffer(bh->b_data, blocksize);	
+			////////////////////////////////////////////////////////	
 			
 			set_buffer_uptodate(bh);
 			mark_buffer_dirty(bh);

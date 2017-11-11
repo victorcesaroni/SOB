@@ -24,5 +24,5 @@ struct aes_helper_t {
 extern int setup_cypher(__u8 *key, unsigned int key_len, __u32 block_size);
 extern int unload_cypher(void);
 
-extern int aes_operation(int type, __u8 *buffer, size_t buffer_len, __u8 *buffer_out);
+extern int aes_operation(int type, __u8 *buffer, size_t buffer_len);
 

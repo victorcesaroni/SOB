@@ -45,7 +45,7 @@ int unload_cypher(void)
  * buffer_out: buffer de saida (conterá os dados criptografados)
  * block_size: tamanho do bloco de criptografia
  */ 
-int aes_operation(int type, __u8 *buffer, size_t buffer_len, __u8 *buffer_out)
+int aes_operation(int type, __u8 *buffer, size_t buffer_len)
 {
 	size_t i, num_blocks;
 	
@@ -59,15 +59,27 @@ int aes_operation(int type, __u8 *buffer, size_t buffer_len, __u8 *buffer_out)
 	if (buffer_len % AES_BLOCK_SIZE != 0) {
 		num_blocks++;
 	}
-		
-	for (i = 0; i < num_blocks; i++) {
+	
+	__u8 *tmp = kmalloc(num_blocks * AES_BLOCK_SIZE, GFP_KERNEL);
+	memset(tmp, 0, num_blocks * AES_BLOCK_SIZE);
+	
+	/*for (i = 0; i < num_blocks; i++) {
 		if (type == AES_ENCRYPT) {
-			crypto_cipher_encrypt_one(aes_helper.tfm, &buffer_out[i * AES_BLOCK_SIZE], &buffer[i * AES_BLOCK_SIZE]);
+			crypto_cipher_encrypt_one(aes_helper.tfm, &tmp[i * AES_BLOCK_SIZE], &buffer[i * AES_BLOCK_SIZE]);
 		} else {
-			crypto_cipher_decrypt_one(aes_helper.tfm, &buffer_out[i * AES_BLOCK_SIZE], &buffer[i * AES_BLOCK_SIZE]);
+			crypto_cipher_decrypt_one(aes_helper.tfm, &tmp[i * AES_BLOCK_SIZE], &buffer[i * AES_BLOCK_SIZE]);
 		}
+	}*/	
+	
+	memcpy(tmp, buffer, buffer_len);
+	
+	for (i = 0; i < buffer_len; i++) {
+		tmp[i] += type == AES_ENCRYPT ? 1 : -1;
 	}
-		
+	
+	memcpy(buffer, tmp, buffer_len);	
+	kfree(tmp);
+	
 	return 0;
 }
 
