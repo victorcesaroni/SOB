@@ -572,7 +572,7 @@ int xminix_write_end(struct file *file, struct address_space *mapping,
 	struct inode *inode = mapping->host;
 	loff_t old_size = inode->i_size;
 	int i_size_changed = 0;
-
+	
 	copied = xminix_block_write_end(file, mapping, pos, len, copied, page, fsdata);
 	
 	/*
