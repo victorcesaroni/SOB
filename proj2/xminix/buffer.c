@@ -28,9 +28,9 @@ void dump_buffer(unsigned char *buf, size_t size)
 		if (c != '\0' && c != '\n' && (c == 9 || c == 10 || (c >= 32 && c <= 127))) {
 			printk("%c", (char)c);
 		}
-		/*else {
-			printk("\\x%02x", (unsigned char)c);
-		}*/		
+		else {
+			//printk("\\x%02x", (unsigned char)c);
+		}	
 	}	
 	printk("\n");
 }

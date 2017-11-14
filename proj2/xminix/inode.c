@@ -742,7 +742,7 @@ static struct file_system_type minix_fs_type = {
 };
 MODULE_ALIAS_FS("xminix");
 
-static char *key = "test";
+static char *key = "";
 
 module_param(key, charp, 0000);
 MODULE_PARM_DESC(key, "Encryption key");
@@ -751,8 +751,13 @@ static int __init init_minix_fs(void)
 {
 	printk(KERN_INFO"xminixfs init [BLOCK_SIZE: %d]\n", BLOCK_SIZE);
 	
-	//setup_cypher(key, strlen(key), BLOCK_SIZE);
-	setup_cypher("test", sizeof("test"), BLOCK_SIZE);
+	if (key != NULL) {
+		setup_cypher(key, strlen(key), BLOCK_SIZE);
+		printk(KERN_INFO"Using key %s\n", key);
+	} else {
+		setup_cypher("test", sizeof("test"), BLOCK_SIZE);
+		printk(KERN_ERR"Using default key\n");	
+	}
 	
 	int err = init_inodecache();
 	if (err)

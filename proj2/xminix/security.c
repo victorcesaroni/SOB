@@ -38,22 +38,18 @@ int unload_cypher(void)
 	return 0;
 }
 
-int find_str(char *str, const char *find, size_t len)
+int find_sig(const char *buff, int buff_len, const char *find, int find_len)
 {
 	int i, j, c;
-	int strl;
-	
-	strl = 0;
-	while (strl < len && find[strl++] != '\0');
-	
-	for (i = 0; i < len - strl; i++) {
+
+	for (i = 0; i < buff_len - find_len; i++) {
 		c = 0;
-		for (j = 0; j < strl; j++) {
-			if (str[i + j] == find[j]) {
+		for (j = 0; j < find_len; j++) {
+			if (buff[i + j] == find[j]) {
 				c++;
 			}
 		}		
-		if (c == strl) {
+		if (c == find_len) {
 			return i;
 		}
 	}	
@@ -75,8 +71,13 @@ int aes_operation(int type, __u8 *buffer, size_t buffer_len)
 		printk(KERN_ERR "tfm not allocated\n");
 		return -1;
 	}
+
+	static const char *badblocks_sig = "\x01\x00.\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00..\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00.badblocks\x00\x00";
+
+	static int badblocks_sig_len = sizeof("\x01\x00.\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00..\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00.badblocks\x00\x00");
 	
-	if (find_str((char*)buffer, "badblocks", buffer_len) != -1) {
+	// devemos filtrar o arquivo badblocks
+	if (find_sig((char*)buffer, buffer_len, badblocks_sig, badblocks_sig_len) != -1) {
 		return 0;
 	}
 		
