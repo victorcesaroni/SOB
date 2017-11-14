@@ -445,28 +445,13 @@ static int minix_write_begin(struct file *file, struct address_space *mapping,
 			loff_t pos, unsigned len, unsigned flags,
 			struct page **pagep, void **fsdata)
 {
-	printk("minix_write_begin\n");
-		
 	int ret;
-	
-	/*
-	aqui conseguimos pegar o tamanho da frase escrita
-	char test[PAGE_SIZE];	
-	
-	struct page *page = *pagep;
-	
-	printk("%X %X %X %d %d %d\n", pagep, pagep ? *pagep : 0, *pagep ? **(int**)pagep : 0, pos, len, PAGE_SIZE);
-		
-	copy_from_user(test, page, len);
-	
-	dump_buffer(pagep, len);
-	//dump_buffer(test, len);*/
 
-	ret = xminix_block_write_begin(mapping, pos, len, flags, pagep,
+	ret = block_write_begin(mapping, pos, len, flags, pagep,
 				minix_get_block);
 	if (unlikely(ret))
 		minix_write_failed(mapping, pos + len);
-		
+
 	return ret;
 }
 
@@ -481,7 +466,7 @@ static const struct address_space_operations minix_aops = {
 	.readpage = minix_readpage,
 	.writepage = minix_writepage,
 	.write_begin = minix_write_begin,
-	.write_end = xminix_write_end,
+	.write_end = generic_write_end,
 	.bmap = minix_bmap
 };
 

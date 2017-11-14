@@ -3,3 +3,6 @@
 *.ko
 test
 *.symvers
+*.mod.c
+*.order
+
