@@ -127,10 +127,8 @@ static void end_buffer_async_read(struct buffer_head *bh, int uptodate)
 	// insira descriptografia aqui	
 	printk("[READ] Antes Descriptografia ");			
 	dump_buffer(bh->b_data, bh->b_size);
-	
-	printk("TODO DECRYPT\n");
-	//aes_operation(AES_DECRYPT, bh->b_data, bh->b_size);
-	//memset(bh->b_data, '1', bh->b_size);
+
+	aes_operation(AES_DECRYPT, bh->b_data, bh->b_size);
 	
 	printk("[READ] Depois Descriptografia ");			
 	dump_buffer(bh->b_data, bh->b_size);
@@ -362,6 +360,276 @@ int xminix_block_read_full_page(struct page *page, get_block_t *get_block)
  *                                  WRITE
  * =========================================================================
  */
+
+static void xminix_end_buffer_async_write(struct buffer_head *bh, int uptodate)
+{
+	unsigned long flags;
+	struct buffer_head *first;
+	struct buffer_head *tmp;
+	struct page *page;
+
+	BUG_ON(!buffer_async_write(bh));
+
+	page = bh->b_page;
+	if (uptodate) {
+		set_buffer_uptodate(bh);
+	} else {
+		buffer_io_error(bh, ", lost async page write");
+		set_bit(AS_EIO, &page->mapping->flags);
+		set_buffer_write_io_error(bh);
+		clear_buffer_uptodate(bh);
+		SetPageError(page);
+	}
+
+	first = page_buffers(page);
+	local_irq_save(flags);
+	bit_spin_lock(BH_Uptodate_Lock, &first->b_state);
+
+	////////////////////////////////////////////////////////
+	//insira criptografia aqui
+	printk("[WRITE] Antes criptografia ");			
+	dump_buffer(bh->b_data, bh->b_size);
+			
+	aes_operation(AES_ENCRYPT, bh->b_data, bh->b_size);
+	
+	printk("[WRITE] Depois criptografia ");
+	dump_buffer(bh->b_data, bh->b_size);	
+	////////////////////////////////////////////////////////
+	
+	clear_buffer_async_write(bh);
+	unlock_buffer(bh);
+	tmp = bh->b_this_page;
+	while (tmp != bh) {
+		if (buffer_async_write(tmp)) {
+			BUG_ON(!buffer_locked(tmp));
+			goto still_busy;
+		}
+		tmp = tmp->b_this_page;
+	}
+	bit_spin_unlock(BH_Uptodate_Lock, &first->b_state);
+	local_irq_restore(flags);
+	end_page_writeback(page);
+	return;
+
+still_busy:
+	bit_spin_unlock(BH_Uptodate_Lock, &first->b_state);
+	local_irq_restore(flags);
+	return;
+}
+
+static void xminix_mark_buffer_async_write_endio(struct buffer_head *bh,
+					  bh_end_io_t *handler)
+{
+	bh->b_end_io = handler;
+	set_buffer_async_write(bh);
+}
+
+static void xminix_mark_buffer_async_write(struct buffer_head *bh)
+{
+	xminix_mark_buffer_async_write_endio(bh, xminix_end_buffer_async_write);
+}
+
+static int xminix__block_write_full_page(struct inode *inode, struct page *page,
+			get_block_t *get_block, struct writeback_control *wbc,
+			bh_end_io_t *handler)
+{
+	int err;
+	sector_t block;
+	sector_t last_block;
+	struct buffer_head *bh, *head;
+	unsigned int blocksize, bbits;
+	int nr_underway = 0;
+	int write_op = (wbc->sync_mode == WB_SYNC_ALL ? WRITE_SYNC : WRITE);
+
+	head = create_page_buffers(page, inode,
+					(1 << BH_Dirty)|(1 << BH_Uptodate));
+
+	/*
+	 * Be very careful.  We have no exclusion from __set_page_dirty_buffers
+	 * here, and the (potentially unmapped) buffers may become dirty at
+	 * any time.  If a buffer becomes dirty here after we've inspected it
+	 * then we just miss that fact, and the page stays dirty.
+	 *
+	 * Buffers outside i_size may be dirtied by __set_page_dirty_buffers;
+	 * handle that here by just cleaning them.
+	 */
+
+	bh = head;
+	blocksize = bh->b_size;
+	bbits = block_size_bits(blocksize);
+
+	block = (sector_t)page->index << (PAGE_CACHE_SHIFT - bbits);
+	last_block = (i_size_read(inode) - 1) >> bbits;
+
+	/*
+	 * Get all the dirty buffers mapped to disk addresses and
+	 * handle any aliases from the underlying blockdev's mapping.
+	 */
+	do {
+		if (block > last_block) {
+			/*
+			 * mapped buffers outside i_size will occur, because
+			 * this page can be outside i_size when there is a
+			 * truncate in progress.
+			 */
+			/*
+			 * The buffer was zeroed by block_write_full_page()
+			 */
+			clear_buffer_dirty(bh);
+			set_buffer_uptodate(bh);
+		} else if ((!buffer_mapped(bh) || buffer_delay(bh)) &&
+			   buffer_dirty(bh)) {
+			WARN_ON(bh->b_size != blocksize);
+			err = get_block(inode, block, bh, 1);
+			if (err)
+				goto recover;
+			clear_buffer_delay(bh);
+			if (buffer_new(bh)) {
+				/* blockdev mappings never come here */
+				clear_buffer_new(bh);
+				unmap_underlying_metadata(bh->b_bdev,
+							bh->b_blocknr);
+			}
+		}
+		bh = bh->b_this_page;
+		block++;
+	} while (bh != head);
+
+	do {
+		if (!buffer_mapped(bh))
+			continue;
+		/*
+		 * If it's a fully non-blocking write attempt and we cannot
+		 * lock the buffer then redirty the page.  Note that this can
+		 * potentially cause a busy-wait loop from writeback threads
+		 * and kswapd activity, but those code paths have their own
+		 * higher-level throttling.
+		 */
+		if (wbc->sync_mode != WB_SYNC_NONE) {
+			lock_buffer(bh);
+		} else if (!trylock_buffer(bh)) {
+			redirty_page_for_writepage(wbc, page);
+			continue;
+		}
+		if (test_clear_buffer_dirty(bh)) {
+			xminix_mark_buffer_async_write_endio(bh, handler);
+		} else {
+			unlock_buffer(bh);
+		}
+	} while ((bh = bh->b_this_page) != head);
+
+	/*
+	 * The page and its buffers are protected by PageWriteback(), so we can
+	 * drop the bh refcounts early.
+	 */
+	BUG_ON(PageWriteback(page));
+	set_page_writeback(page);
+
+	do {
+		struct buffer_head *next = bh->b_this_page;
+		if (buffer_async_write(bh)) {
+			xminix_submit_bh_wbc(write_op, bh, 0, wbc);
+			nr_underway++;
+		}
+		bh = next;
+	} while (bh != head);
+	unlock_page(page);
+
+	err = 0;
+done:
+	if (nr_underway == 0) {
+		/*
+		 * The page was marked dirty, but the buffers were
+		 * clean.  Someone wrote them back by hand with
+		 * ll_rw_block/submit_bh.  A rare case.
+		 */
+		end_page_writeback(page);
+
+		/*
+		 * The page and buffer_heads can be released at any time from
+		 * here on.
+		 */
+	}
+	return err;
+
+recover:
+	/*
+	 * ENOSPC, or some other error.  We may already have added some
+	 * blocks to the file, so we need to write these out to avoid
+	 * exposing stale data.
+	 * The page is currently locked and not marked for writeback
+	 */
+	bh = head;
+	/* Recovery: lock and submit the mapped buffers */
+	do {
+		if (buffer_mapped(bh) && buffer_dirty(bh) &&
+		    !buffer_delay(bh)) {
+			lock_buffer(bh);
+			xminix_mark_buffer_async_write_endio(bh, handler);
+		} else {
+			/*
+			 * The buffer may have been set dirty during
+			 * attachment to a dirty page.
+			 */
+			clear_buffer_dirty(bh);
+		}
+	} while ((bh = bh->b_this_page) != head);
+	SetPageError(page);
+	BUG_ON(PageWriteback(page));
+	mapping_set_error(page->mapping, err);
+	set_page_writeback(page);
+	do {
+		struct buffer_head *next = bh->b_this_page;
+		if (buffer_async_write(bh)) {
+			clear_buffer_dirty(bh);
+			xminix_submit_bh_wbc(write_op, bh, 0, wbc);
+			nr_underway++;
+		}
+		bh = next;
+	} while (bh != head);
+	unlock_page(page);
+	goto done;
+}
+ 
+ 
+int xminix_block_write_full_page(struct page *page, get_block_t *get_block,
+			struct writeback_control *wbc)
+{
+	struct inode * const inode = page->mapping->host;
+	loff_t i_size = i_size_read(inode);
+	const pgoff_t end_index = i_size >> PAGE_CACHE_SHIFT;
+	unsigned offset;
+
+	/* Is the page fully inside i_size? */
+	if (page->index < end_index)
+		return xminix__block_write_full_page(inode, page, get_block, wbc,
+					       xminix_end_buffer_async_write);
+
+	/* Is the page fully outside i_size? (truncate in progress) */
+	offset = i_size & (PAGE_CACHE_SIZE-1);
+	if (page->index >= end_index+1 || !offset) {
+		/*
+		 * The page may have dirty, unmapped buffers.  For example,
+		 * they may have been added in ext3_writepage().  Make them
+		 * freeable here, so the page does not leak.
+		 */
+		do_invalidatepage(page, 0, PAGE_CACHE_SIZE);
+		unlock_page(page);
+		return 0; /* don't care */
+	}
+
+	/*
+	 * The page straddles i_size.  It must be zeroed out on each and every
+	 * writepage invocation because it may be mmapped.  "A file is mapped
+	 * in multiples of the page size.  For a file that is not a multiple of
+	 * the  page size, the remaining memory is zeroed when mapped, and
+	 * writes to that region are not written out to the file."
+	 */
+	zero_user_segment(page, offset, PAGE_CACHE_SIZE);
+	return xminix__block_write_full_page(inode, page, get_block, wbc,
+							xminix_end_buffer_async_write);
+}
+ 
  
 static int xminix__block_write_begin(struct page *page, loff_t pos, unsigned len,
 		get_block_t *get_block)
@@ -496,7 +764,7 @@ static int xminix__block_commit_write(struct inode *inode, struct page *page,
 			if (!buffer_uptodate(bh))
 				partial = 1;
 		} else {
-			////////////////////////////////////////////////////////
+			/*////////////////////////////////////////////////////////
 			//insira criptografia aqui
 			printk("[WRITE] Antes criptografia ");			
 			dump_buffer(bh->b_data, blocksize);
@@ -505,7 +773,8 @@ static int xminix__block_commit_write(struct inode *inode, struct page *page,
 			
 			printk("[WRITE] Depois criptografia ");
 			dump_buffer(bh->b_data, blocksize);	
-			////////////////////////////////////////////////////////	
+			////////////////////////////////////////////////////////
+			*/
 			
 			set_buffer_uptodate(bh);
 			mark_buffer_dirty(bh);

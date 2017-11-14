@@ -411,7 +411,7 @@ static int minix_writepage(struct page *page, struct writeback_control *wbc)
 {
 	printk("minix_writepage\n");
 	
-	return block_write_full_page(page, minix_get_block, wbc);
+	return xminix_block_write_full_page(page, minix_get_block, wbc);
 }
 
 

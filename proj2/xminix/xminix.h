@@ -20,3 +20,5 @@ extern int xminix_write_end(struct file *file, struct address_space *mapping,
 			loff_t pos, unsigned len, unsigned copied,
 			struct page *page, void *fsdata);
 
+extern int xminix_block_write_full_page(struct page *page, get_block_t *get_block,
+			struct writeback_control *wbc);
