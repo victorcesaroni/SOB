@@ -67,6 +67,21 @@ static struct buffer_head *create_page_buffers(struct page *page, struct inode *
 	return page_buffers(page);
 }
 
+void xminix_do_invalidatepage(struct page *page, unsigned int offset,
+		       unsigned int length)
+{
+	void (*invalidatepage)(struct page *, unsigned int, unsigned int);
+
+	invalidatepage = page->mapping->a_ops->invalidatepage;
+#ifdef CONFIG_BLOCK
+	if (!invalidatepage)
+		invalidatepage = block_invalidatepage;
+#endif
+	if (invalidatepage)
+		(*invalidatepage)(page, offset, length);
+}
+
+
 /*
  * =========================================================================
  *                                   READ
@@ -221,7 +236,9 @@ static int xminix_submit_bh_wbc(int rw, struct buffer_head *bh,
 	BUG_ON(!bh->b_end_io);
 	BUG_ON(buffer_delay(bh));
 	BUG_ON(buffer_unwritten(bh));
-
+	
+	printk("[READ:%d, WRITE:%d, %X]\n", (rw & READ), (rw & WRITE), rw);
+	
 	/*
 	 * Only clear out a write error when rewriting
 	 */
@@ -385,18 +402,10 @@ static void xminix_end_buffer_async_write(struct buffer_head *bh, int uptodate)
 	local_irq_save(flags);
 	bit_spin_lock(BH_Uptodate_Lock, &first->b_state);
 
-	////////////////////////////////////////////////////////
-	//insira criptografia aqui
-	printk("[WRITE] Antes criptografia ");			
-	dump_buffer(bh->b_data, bh->b_size);
-			
-	aes_operation(AES_ENCRYPT, bh->b_data, bh->b_size);
-	
-	printk("[WRITE] Depois criptografia ");
-	dump_buffer(bh->b_data, bh->b_size);	
-	////////////////////////////////////////////////////////
-	
 	clear_buffer_async_write(bh);
+	
+	
+	
 	unlock_buffer(bh);
 	tmp = bh->b_this_page;
 	while (tmp != bh) {
@@ -422,11 +431,6 @@ static void xminix_mark_buffer_async_write_endio(struct buffer_head *bh,
 {
 	bh->b_end_io = handler;
 	set_buffer_async_write(bh);
-}
-
-static void xminix_mark_buffer_async_write(struct buffer_head *bh)
-{
-	xminix_mark_buffer_async_write_endio(bh, xminix_end_buffer_async_write);
 }
 
 static int xminix__block_write_full_page(struct inode *inode, struct page *page,
@@ -528,6 +532,17 @@ static int xminix__block_write_full_page(struct inode *inode, struct page *page,
 	do {
 		struct buffer_head *next = bh->b_this_page;
 		if (buffer_async_write(bh)) {
+			////////////////////////////////////////////////////////
+			//insira criptografia aqui
+			printk("[WRITE] Antes criptografia ");			
+			dump_buffer(bh->b_data, bh->b_size);
+			
+			aes_operation(AES_ENCRYPT, bh->b_data, bh->b_size);
+	
+			printk("[WRITE] Depois criptografia ");
+			dump_buffer(bh->b_data, bh->b_size);	
+			////////////////////////////////////////////////////////
+	
 			xminix_submit_bh_wbc(write_op, bh, 0, wbc);
 			nr_underway++;
 		}
@@ -613,7 +628,7 @@ int xminix_block_write_full_page(struct page *page, get_block_t *get_block,
 		 * they may have been added in ext3_writepage().  Make them
 		 * freeable here, so the page does not leak.
 		 */
-		do_invalidatepage(page, 0, PAGE_CACHE_SIZE);
+		xminix_do_invalidatepage(page, 0, PAGE_CACHE_SIZE);
 		unlock_page(page);
 		return 0; /* don't care */
 	}
@@ -764,17 +779,17 @@ static int xminix__block_commit_write(struct inode *inode, struct page *page,
 			if (!buffer_uptodate(bh))
 				partial = 1;
 		} else {
-			/*////////////////////////////////////////////////////////
-			//insira criptografia aqui
-			printk("[WRITE] Antes criptografia ");			
-			dump_buffer(bh->b_data, blocksize);
-					
-			aes_operation(AES_ENCRYPT, bh->b_data, bh->b_size);
-			
-			printk("[WRITE] Depois criptografia ");
-			dump_buffer(bh->b_data, blocksize);	
 			////////////////////////////////////////////////////////
-			*/
+			//insira criptografia aqui
+			//printk("[WRITE] Antes criptografia ");			
+			//dump_buffer(bh->b_data, blocksize);
+					
+			//aes_operation(AES_ENCRYPT, bh->b_data, bh->b_size);
+			
+			//printk("[WRITE] Depois criptografia ");
+			//dump_buffer(bh->b_data, blocksize);	
+			////////////////////////////////////////////////////////
+			
 			
 			set_buffer_uptodate(bh);
 			mark_buffer_dirty(bh);

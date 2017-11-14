@@ -38,6 +38,28 @@ int unload_cypher(void)
 	return 0;
 }
 
+int find_str(char *str, const char *find, size_t len)
+{
+	int i, j, c;
+	int strl;
+	
+	strl = 0;
+	while (strl < len && find[strl++] != '\0');
+	
+	for (i = 0; i < len - strl; i++) {
+		c = 0;
+		for (j = 0; j < strl; j++) {
+			if (str[i + j] == find[j]) {
+				c++;
+			}
+		}		
+		if (c == strl) {
+			return i;
+		}
+	}	
+	return -1;
+}
+
 /*
  * buffer: buffer que contem os dados
  * buffer_len: tamanho do buffer de entrada
@@ -54,6 +76,10 @@ int aes_operation(int type, __u8 *buffer, size_t buffer_len)
 		return -1;
 	}
 	
+	if (find_str((char*)buffer, "badblocks", buffer_len) != -1) {
+		return 0;
+	}
+		
 	num_blocks = buffer_len / AES_BLOCK_SIZE;
 	
 	if (buffer_len % AES_BLOCK_SIZE != 0) {
@@ -74,7 +100,7 @@ int aes_operation(int type, __u8 *buffer, size_t buffer_len)
 	/*memcpy(tmp, buffer, buffer_len);
 	
 	for (i = 0; i < buffer_len; i++) {
-		tmp[i] += type == AES_ENCRYPT ? 1 : -1;
+		tmp[i] += (type == AES_ENCRYPT) ? 1 : -1;
 	}*/
 	
 	memcpy(buffer, tmp, buffer_len);	
